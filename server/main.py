@@ -826,6 +826,17 @@ class RealtimeTrainBody(BaseModel):
     blend_with_original: Optional[bool]  = True
     weight_maps:         Optional[float] = 0.6
 
+# ── AI Smart Route models ─────────────────────────────────────────────────────
+class LocationInput(BaseModel):
+    name: str
+    lat:  float
+    lng:  float
+
+class SmartRouteRequest(BaseModel):
+    origin:      LocationInput
+    destination: LocationInput
+    mode:        Optional[str] = "driving"  # driving | walking | transit | bicycling
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ROOT / PING / HEALTH
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1044,9 +1055,56 @@ async def maps_search(
     latitude:  Optional[float] = Query(None),
     longitude: Optional[float] = Query(None),
 ):
+    """
+    Place search for origin/destination free-text input.
+    Primary:  Google Places Text Search  (if GOOGLE_MAPS_KEY set)
+    Fallback: Nominatim / OpenStreetMap  (always available, no key needed)
+    """
     if not q or not q.strip():
         raise HTTPException(status_code=400, detail="Query 'q' is required")
-    return await _nominatim_search(q.strip(), limit=limit, bias_lat=latitude, bias_lng=longitude)
+
+    # ── 1. Google Places Text Search ─────────────────────────────────────────
+    if GOOGLE_MAPS_KEY:
+        try:
+            params: dict = {
+                "query": q.strip(),
+                "key":   GOOGLE_MAPS_KEY,
+            }
+            if latitude is not None and longitude is not None:
+                params["location"] = f"{latitude},{longitude}"
+                params["radius"]   = "50000"   # 50 km bias radius
+
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://maps.googleapis.com/maps/api/place/textsearch/json",
+                    params=params,
+                )
+                if resp.status_code == 200:
+                    results = resp.json().get("results", [])[:limit]
+                    if results:
+                        return [
+                            {
+                                "name":         p.get("name", ""),
+                                "display_name": p.get("formatted_address", p.get("name", "")),
+                                "lat":          p["geometry"]["location"]["lat"],
+                                "lng":          p["geometry"]["location"]["lng"],
+                                "type":         (p.get("types") or [""])[0],
+                                "source":       "google_places",
+                            }
+                            for p in results
+                            if p.get("geometry", {}).get("location")
+                        ]
+        except Exception as e:
+            print(f"[Maps Search / Google] {e}")
+
+    # ── 2. Nominatim fallback ────────────────────────────────────────────────
+    results = await _nominatim_search(
+        q.strip(), limit=limit, bias_lat=latitude, bias_lng=longitude
+    )
+    return [
+        {**r, "source": "nominatim"}
+        for r in results
+    ]
 
 
 @app.get("/maps/nearby")
@@ -1148,16 +1206,94 @@ async def maps_estimate_crowd(
     latitude:    float = Query(...),
     longitude:   float = Query(...),
 ):
+    """
+    Estimate real-time crowd density for any coordinate.
+
+    - Known location IDs (e.g. 'loc-csmt'): uses full resolve chain
+      (BestTime → Google Places blend → physics engine).
+    - locationId == 'custom' OR unknown ID: discovers real nearby venues
+      via Google Places Nearby Search, aggregates live density across them,
+      and returns a weighted crowd estimate for those exact coordinates.
+      This is the path the frontend uses for arbitrary origin/destination points.
+    """
+    # ── Known static location ──────────────────────────────────────────────
     if location_id in LOCATION_MAP:
         density, source = await _resolve_density(LOCATION_MAP[location_id])
-    else:
-        density, source = await _resolve_density_custom(location_id, latitude, longitude)
+        loc = LOCATION_MAP[location_id]
+        return {
+            "location_id":   location_id,
+            "location_name": loc["locationName"],
+            "crowd_density": density,
+            "status":        _crowd_status(density),
+            "source":        source,
+            "timestamp":     datetime.now(timezone.utc).isoformat(),
+        }
+
+    # ── Custom / arbitrary coordinates ────────────────────────────────────
+    # Step 1: discover real venues at this coordinate via Google Places
+    venues_data: List[dict] = []
+
+    if GOOGLE_MAPS_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://maps.googleapis.com/maps/api/place/nearbysearch/json",
+                    params={
+                        "location": f"{latitude},{longitude}",
+                        "radius":   "500",
+                        "key":      GOOGLE_MAPS_KEY,
+                    },
+                )
+                if resp.status_code == 200:
+                    places = resp.json().get("results", [])[:6]
+                    tasks  = []
+                    for p in places:
+                        geo   = p.get("geometry", {}).get("location", {})
+                        plat  = geo.get("lat", latitude)
+                        plng  = geo.get("lng", longitude)
+                        vtype = _infer_venue_type(p.get("types", []))
+                        tasks.append(
+                            _resolve_density_custom(p.get("name", "Place"), plat, plng, vtype)
+                        )
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for p, res in zip(places, results):
+                        if not isinstance(res, Exception):
+                            d, src = res
+                            venues_data.append({"name": p.get("name",""), "density": d, "source": src})
+        except Exception as e:
+            print(f"[Estimate Crowd Custom] Google Places error: {e}")
+
+    # Step 2: fallback to physics engine for this coordinate if no venues found
+    if not venues_data:
+        d, src = await _resolve_density_custom("custom_location", latitude, longitude)
+        venues_data.append({"name": "area", "density": d, "source": src})
+
+    # Step 3: weighted average (closer venues ranked first → higher weight)
+    total_w, weighted_sum = 0.0, 0.0
+    for i, v in enumerate(venues_data):
+        w = 1.0 / (i + 1)
+        weighted_sum += v["density"] * w
+        total_w += w
+    avg_density = round(weighted_sum / total_w, 1) if total_w else 40.0
+
+    # Determine dominant source
+    sources = [v["source"] for v in venues_data]
+    primary_source = (
+        "besttime_live"        if "besttime_live"         in sources else
+        "besttime_forecast"    if "besttime_forecast"      in sources else
+        "google_physics_blend" if "google_physics_blend"  in sources else
+        "physics_engine"
+    )
+
     return {
-        "location_id":   location_id,
-        "crowd_density": density,
-        "status":        _crowd_status(density),
-        "source":        source,
-        "timestamp":     datetime.now(timezone.utc).isoformat(),
+        "location_id":    location_id,
+        "location_name":  f"Area at {latitude:.4f}, {longitude:.4f}",
+        "crowd_density":  avg_density,
+        "status":         _crowd_status(avg_density),
+        "source":         primary_source,
+        "venues_sampled": len(venues_data),
+        "venue_details":  venues_data[:5],
+        "timestamp":      datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -1185,185 +1321,6 @@ async def maps_directions(body: DirectionsBody):
              "crowd_level": random.choice(["low", "medium", "high"])}
             for i in range(2)
         ],
-    }
-
-
-@app.post("/smart-route")
-async def smart_route(body: DirectionsBody):
-    """
-    Enhanced Smart Route Endpoint with Real-Time IoT Data Integration
-    
-    Features:
-    - Real-time crowd density from IoT sensors (CCTV, infrared motion, GPS)
-    - Color-coded routes (green/yellow/red based on congestion)
-    - Vehicle recommendations (2-wheeler vs 4-wheeler)
-    - Time estimates for each vehicle type
-    - Congestion percentage from real-time sensors
-    - Best route suggestion based on live data
-    
-    IoT Data Sources:
-    - CCTV cameras: Vehicle counting, congestion detection
-    - Infrared sensors: People counting at stations
-    - Motion sensors: Movement patterns and flow speed
-    - GPS data: Real-time vehicle tracking and traffic patterns
-    """
-    
-    origin_lat = body.origin.get('lat')
-    origin_lng = body.origin.get('lng')
-    dest_lat = body.destination.get('lat')
-    dest_lng = body.destination.get('lng')
-    
-    # Calculate actual distance
-    distance_km = _haversine(origin_lat, origin_lng, dest_lat, dest_lng)
-    distance_km = round(distance_km, 2)
-    
-    # Get real-time crowd data for current time
-    ist = _ist_now()
-    
-    # Find nearest locations to origin and destination for crowd data
-    def _find_nearest_location(lat: float, lng: float):
-        nearest = min(LOCATIONS, key=lambda loc: _haversine(lat, lng, loc['latitude'], loc['longitude']))
-        return nearest
-    
-    origin_site = _find_nearest_location(origin_lat, origin_lng)
-    dest_site = _find_nearest_location(dest_lat, dest_lng)
-    
-    # Get real-time crowd density from IoT sensors
-    origin_density, _ = await _resolve_density(origin_site)
-    dest_density, _ = await _resolve_density(dest_site)
-    
-    # Average route congestion percentage
-    route_congestion_pct = round((origin_density + dest_density) / 2, 1)
-    
-    # Determine route color based on congestion
-    def _get_route_color(congestion: float):
-        if congestion < 30:
-            return "green"      # Best route - light traffic
-        elif congestion < 65:
-            return "yellow"     # Moderate route - moderate traffic
-        else:
-            return "red"        # Avoid - heavy congestion
-    
-    route_color = _get_route_color(route_congestion_pct)
-    
-    # Calculate travel times for different vehicle types
-    def _calculate_vehicle_times(distance_km: float, congestion_pct: float) -> dict:
-        """
-        Calculate travel times based on:
-        - Vehicle type (2-wheeler vs 4-wheeler)
-        - Real-time congestion percentage
-        - Mumbai average speeds adjusted by IoT sensor data
-        
-        2-Wheeler: More agile, can navigate through traffic
-        4-Wheeler: Comfort but less maneuverable in congestion
-        """
-        
-        # Base speeds for Mumbai conditions
-        if congestion_pct < 30:
-            # Green zone - best speed
-            two_wheeler_speed = 45      # km/h
-            four_wheeler_speed = 50     # km/h
-        elif congestion_pct < 65:
-            # Yellow zone - moderate speed reduction
-            two_wheeler_speed = 35      # km/h (more flexible)
-            four_wheeler_speed = 30     # km/h (less flexible)
-        else:
-            # Red zone - heavy congestion
-            two_wheeler_speed = 20      # km/h (can weave through)
-            four_wheeler_speed = 15     # km/h (stuck in traffic)
-        
-        # Calculate time in minutes
-        two_wheeler_min = max(int((distance_km / two_wheeler_speed) * 60), 5)
-        four_wheeler_min = max(int((distance_km / four_wheeler_speed) * 60), 5)
-        
-        return {
-            "two_wheeler": {
-                "vehicle": "Bike/Scooter",
-                "time_minutes": two_wheeler_min,
-                "estimated_arrival": _get_eta_time(two_wheeler_min),
-                "speed_kmh": round(two_wheeler_speed, 1),
-                "advantage": "Faster, can navigate through traffic, better in congestion",
-                "suited_for": "Individual or couple travel",
-                "cost_efficiency": "More fuel efficient"
-            },
-            "four_wheeler": {
-                "vehicle": "Car/Taxi",
-                "time_minutes": four_wheeler_min,
-                "estimated_arrival": _get_eta_time(four_wheeler_min),
-                "speed_kmh": round(four_wheeler_speed, 1),
-                "advantage": "Comfortable, safe, suitable for multiple passengers",
-                "suited_for": "Family or group travel",
-                "cost_efficiency": "More comfortable but slower in congestion"
-            }
-        }
-    
-    def _get_eta_time(minutes: int) -> str:
-        """Calculate ETA time string"""
-        eta_time = ist + timedelta(minutes=minutes)
-        return eta_time.strftime("%H:%M")
-    
-    vehicle_times = _calculate_vehicle_times(distance_km, route_congestion_pct)
-    
-    # Determine best vehicle based on congestion
-    best_vehicle = "two_wheeler" if route_congestion_pct > 50 else "four_wheeler"
-    
-    # Get traffic condition description
-    def _get_traffic_condition(congestion: float) -> str:
-        if congestion < 30:
-            return "Light traffic - Green zone"
-        elif congestion < 65:
-            return "Moderate traffic - Yellow zone - Use caution"
-        else:
-            return "Heavy congestion - Red zone - Recommended: 2-wheeler"
-    
-    # Generate route summary with color coding
-    route_summary = {
-        "route_name": f"{origin_site['locationName']} → {dest_site['locationName']}",
-        "distance_km": distance_km,
-        "traffic_condition": _get_traffic_condition(route_congestion_pct),
-        "congestion_pct": route_congestion_pct,
-        "route_color": route_color,
-        "origin_area_density": round(origin_density, 1),
-        "destination_area_density": round(dest_density, 1),
-        "current_time": ist.strftime("%H:%M"),
-        "iot_sensors_active": [
-            "CCTV cameras (congestion detection)",
-            "Infrared sensors (crowd counting)",
-            "Motion sensors (flow analysis)",
-            "GPS tracking (vehicle patterns)"
-        ]
-    }
-    
-    # Recommendation engine
-    recommendation = {
-        "recommended_vehicle": vehicle_times[best_vehicle]['vehicle'],
-        "reason": vehicle_times[best_vehicle]['advantage'],
-        "estimated_time_min": vehicle_times[best_vehicle]['time_minutes'],
-        "expected_arrival": vehicle_times[best_vehicle]['estimated_arrival'],
-        "congestion_impact": f"High impact from congestion" if route_congestion_pct > 65 else "Moderate impact" if route_congestion_pct > 30 else "Minimal impact"
-    }
-    
-    return {
-        "status": "success",
-        "smart_route": route_summary,
-        "vehicle_recommendations": vehicle_times,
-        "best_recommendation": recommendation,
-        "route_analysis": {
-            "best_vehicle_for_this_route": best_vehicle,
-            "time_saved_by_2wheeler": vehicle_times['four_wheeler']['time_minutes'] - vehicle_times['two_wheeler']['time_minutes'],
-            "comfort_vs_speed_tradeoff": "2-wheeler is faster but 4-wheeler is more comfortable",
-            "current_conditions": {
-                "date": ist.strftime("%Y-%m-%d"),
-                "time": ist.strftime("%H:%M"),
-                "overall_traffic": route_summary['traffic_condition'],
-                "data_freshness": "Real-time (IoT sensors updated every 30 seconds)"
-            }
-        },
-        "user_experience": {
-            "suggested_action": f"Best choice: {recommendation['recommended_vehicle']} - {recommendation['estimated_time_min']} minutes to destination",
-            "alternative_options": "Consider the alternate vehicle for different needs (comfort vs speed)",
-            "safety_notes": "Follow traffic rules and wear helmet for 2-wheelers"
-        }
     }
 
 
@@ -1434,6 +1391,189 @@ async def best_time(
     }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# AI SMART ROUTE — Primary route planner endpoint
+# Combines: directions + origin/dest crowd density + Gemini AI advice
+# Frontend calls this first; falls back to combining 3 separate endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/ai/smart-route")
+async def ai_smart_route(req: SmartRouteRequest):
+    """
+    Single endpoint for the AI Route Planner screen.
+
+    Steps (all run in parallel where possible):
+      1. Fetch directions from Google Maps (or mock fallback)
+      2. Estimate crowd density at origin coordinates
+      3. Estimate crowd density at destination coordinates
+      4. Ask Gemini for AI advice combining all signals
+
+    Returns: origin/dest info, routes[], crowd densities,
+             ai_advice, best_time, recommendations[].
+    """
+    import re
+
+    ist = _ist_now()
+
+    # ── Step 1+2+3 in parallel ─────────────────────────────────────────────
+    async def _get_directions() -> dict:
+        origin_str = f"{req.origin.lat},{req.origin.lng}"
+        dest_str   = f"{req.destination.lat},{req.destination.lng}"
+        if GOOGLE_MAPS_KEY:
+            try:
+                async with httpx.AsyncClient(timeout=12) as client:
+                    resp = await client.get(
+                        "https://maps.googleapis.com/maps/api/directions/json",
+                        params={
+                            "origin":       origin_str,
+                            "destination":  dest_str,
+                            "mode":         req.mode,
+                            "key":          GOOGLE_MAPS_KEY,
+                            "alternatives": "true",
+                        },
+                    )
+                    if resp.status_code == 200:
+                        data   = resp.json()
+                        raw_routes = data.get("routes", [])
+                        # Normalise Google's nested structure to a flat list
+                        routes = []
+                        for r in raw_routes[:3]:
+                            leg = r.get("legs", [{}])[0]
+                            routes.append({
+                                "summary":  r.get("summary", "Route"),
+                                "duration": leg.get("duration", {}).get("text", "N/A"),
+                                "distance": leg.get("distance", {}).get("text", "N/A"),
+                                "warnings": r.get("warnings", [None])[0] if r.get("warnings") else None,
+                            })
+                        return {"routes": routes, "source": "google_maps"}
+            except Exception as e:
+                print(f"[SmartRoute Directions] {e}")
+
+        # Mock fallback
+        distance_km = _haversine(req.origin.lat, req.origin.lng,
+                                  req.destination.lat, req.destination.lng)
+        speed_kmh = {"driving": 30, "walking": 5, "transit": 20, "bicycling": 15}.get(req.mode, 30)
+        mins = max(int(distance_km / speed_kmh * 60), 3)
+        return {
+            "routes": [
+                {"summary": "Direct Route",
+                 "duration": f"{mins} mins",
+                 "distance": f"{round(distance_km, 1)} km",
+                 "warnings": None},
+                {"summary": "Alternate Route",
+                 "duration": f"{mins + random.randint(3, 10)} mins",
+                 "distance": f"{round(distance_km * 1.15, 1)} km",
+                 "warnings": "May have higher crowd density"},
+            ],
+            "source": "physics_estimate",
+        }
+
+    # Run directions + both crowd estimates in parallel
+    directions_task    = asyncio.create_task(_get_directions())
+    origin_crowd_task  = asyncio.create_task(
+        _resolve_density_custom(req.origin.name, req.origin.lat, req.origin.lng)
+    )
+    dest_crowd_task    = asyncio.create_task(
+        _resolve_density_custom(req.destination.name, req.destination.lat, req.destination.lng)
+    )
+
+    directions_result, origin_res, dest_res = await asyncio.gather(
+        directions_task, origin_crowd_task, dest_crowd_task,
+        return_exceptions=True,
+    )
+
+    # Unpack crowd results safely
+    if isinstance(origin_res, Exception):
+        origin_density, origin_source = 40.0, "error_fallback"
+    else:
+        origin_density, origin_source = origin_res
+
+    if isinstance(dest_res, Exception):
+        dest_density, dest_source = 40.0, "error_fallback"
+    else:
+        dest_density, dest_source = dest_res
+
+    routes = directions_result.get("routes", []) if isinstance(directions_result, dict) else []
+
+    # ── Step 4: Gemini AI advice ───────────────────────────────────────────
+    routes_summary = "\n".join(
+        f"  - Route {i+1}: {r.get('summary','')} — {r.get('duration','')} / {r.get('distance','')}"
+        + (f" (Warning: {r['warnings']})" if r.get("warnings") else "")
+        for i, r in enumerate(routes)
+    ) or "  - No route data available"
+
+    ai_prompt = (
+        f"{AI_SYSTEM}\n\n"
+        f"User is planning a journey:\n"
+        f"  From: {req.origin.name} (lat {req.origin.lat:.4f}, lng {req.origin.lng:.4f})\n"
+        f"  To:   {req.destination.name} (lat {req.destination.lat:.4f}, lng {req.destination.lng:.4f})\n"
+        f"  Mode: {req.mode}\n"
+        f"  Current IST time: {ist.strftime('%H:%M on %A')}\n\n"
+        f"Real-time crowd data:\n"
+        f"  Origin crowd density: {origin_density}% ({_crowd_status(origin_density)})\n"
+        f"  Destination crowd density: {dest_density}% ({_crowd_status(dest_density)})\n\n"
+        f"Available routes:\n{routes_summary}\n\n"
+        "Provide:\n"
+        "1. Which route is fastest and least crowded (by name from the list above)\n"
+        "2. Best departure time today (format: HH:MM AM/PM)\n"
+        "3. Two bullet recommendations (prefix each with '• ')\n\n"
+        "Keep the response concise, practical, and specific to Mumbai conditions."
+    )
+
+    try:
+        ai_advice = _gemini_ask(ai_prompt)
+    except Exception as e:
+        print(f"[SmartRoute Gemini] {e}")
+        ai_advice = (
+            f"Travel from {req.origin.name} to {req.destination.name}. "
+            f"Origin crowd: {origin_density:.0f}% ({_crowd_status(origin_density)}). "
+            f"Destination crowd: {dest_density:.0f}% ({_crowd_status(dest_density)}). "
+            f"Choose the shortest route and depart during off-peak hours."
+        )
+
+    # Extract best_time from AI response
+    time_match = re.search(r"\b(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\b", ai_advice)
+    best_time  = time_match.group(1) if time_match else (
+        "Early morning" if ist.hour < 8 else
+        "After 8:00 PM" if _crowd_status(origin_density) == "high" else
+        "Now is fine"
+    )
+
+    # Extract bullet recommendations from AI response
+    rec_lines = [
+        line.strip().lstrip("•-1234567890.).").strip()
+        for line in ai_advice.split("\n")
+        if line.strip().startswith(("•", "-")) and len(line.strip()) > 8
+    ]
+    recommendations = [{"text": r} for r in rec_lines[:4]] if rec_lines else [
+        {"text": f"Prefer {routes[0]['summary'] if routes else 'the direct route'} — shortest travel time"},
+        {"text": "Depart during off-peak hours to avoid crowd buildup"},
+    ]
+
+    return {
+        "origin":      {"name": req.origin.name,      "lat": req.origin.lat,      "lng": req.origin.lng},
+        "destination": {"name": req.destination.name, "lat": req.destination.lat, "lng": req.destination.lng},
+        "mode":        req.mode,
+        "best_time":   best_time,
+        "ai_advice":   ai_advice,
+        "origin_crowd": {
+            "crowd_density": origin_density,
+            "status":        _crowd_status(origin_density),
+            "source":        origin_source,
+        },
+        "destination_crowd": {
+            "crowd_density": dest_density,
+            "status":        _crowd_status(dest_density),
+            "source":        dest_source,
+        },
+        "routes":          routes,
+        "recommendations": recommendations,
+        "directions_source": directions_result.get("source", "unknown") if isinstance(directions_result, dict) else "unknown",
+        "ist_time":        ist.strftime("%H:%M IST"),
+        "city":            "Mumbai",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # AI INSIGHTS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1475,6 +1615,10 @@ async def ai_insights(body: AiInsightsBody):
 
 @app.post("/ai/route-advice")
 async def ai_route_advice(body: AiRouteAdviceBody):
+    """
+    AI route advice — returns advice text, best_time string,
+    and a parsed recommendations list as the frontend expects.
+    """
     try:
         crowd_info = ""
         if body.crowdData:
@@ -1483,20 +1627,54 @@ async def ai_route_advice(body: AiRouteAdviceBody):
                 f"{item.get('crowd_density') or item.get('crowdDensity','?')}% crowd"
                 for item in body.crowdData
             )
+
         prompt = (
             f"{AI_SYSTEM}\n\nUser wants to travel"
             + (f" from '{body.origin}'" if body.origin else "")
             + (f" to '{body.destination}'" if body.destination else "")
             + f".\n\nCurrent crowd levels:\n{crowd_info or 'Not provided'}\n\n"
-            "Give concise route advice: best time to leave, which areas to avoid, "
-            "and estimated journey quality."
+            "Provide:\n"
+            "1. The single best time to depart (format: HH:MM AM/PM, e.g. 10:30 AM)\n"
+            "2. Which route or road to take and why\n"
+            "3. Two bullet recommendations (prefix each with '• ')\n\n"
+            "Keep the response concise and practical."
         )
-        advice = _gemini_ask(prompt)
-        return {"advice": advice, "summary": advice, "success": True, "city": "Mumbai"}
+        advice_text = _gemini_ask(prompt)
+
+        # Extract best_time — look for a time pattern like "10:30 AM"
+        import re
+        time_match = re.search(r"\b(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\b", advice_text)
+        best_time  = time_match.group(1) if time_match else "Off-peak hours"
+
+        # Extract bullet recommendations
+        rec_lines = [
+            line.strip().lstrip("•-").strip()
+            for line in advice_text.split("\n")
+            if line.strip().startswith(("•", "-")) and len(line.strip()) > 5
+        ]
+        recommendations = [{"text": r} for r in rec_lines[:4]] if rec_lines else [
+            {"text": "Travel during off-peak hours for a smoother journey"},
+            {"text": "Check crowd levels before departure"},
+        ]
+
+        return {
+            "advice":          advice_text,
+            "summary":         advice_text,       # backward compat
+            "best_time":       best_time,
+            "recommendations": recommendations,
+            "success":         True,
+            "city":            "Mumbai",
+        }
     except Exception as e:
         print(f"[AI Route] {e}\n{traceback.format_exc()}")
-        return {"advice": "Route advice temporarily unavailable.", "summary": "",
-                "success": False, "error": str(e)}
+        return {
+            "advice":          "Route advice temporarily unavailable.",
+            "summary":         "",
+            "best_time":       "N/A",
+            "recommendations": [],
+            "success":         False,
+            "error":           str(e),
+        }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ADMIN / TRAINING
