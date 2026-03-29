@@ -1392,184 +1392,314 @@ async def best_time(
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AI SMART ROUTE — Primary route planner endpoint
-# Combines: directions + origin/dest crowd density + Gemini AI advice
-# Frontend calls this first; falls back to combining 3 separate endpoints
+# Combines: live multi-mode directions + Gemini routing advice
+# NO crowd density in output — pure live routing data
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ── Live traffic helper: fetch real directions for one travel mode ────────────
+
+async def _fetch_directions_for_mode(
+    origin_lat: float, origin_lng: float,
+    dest_lat:   float, dest_lng:   float,
+    mode:       str,
+) -> dict:
+    """
+    Fetch live directions from Google Maps Directions API for a single travel mode.
+    Returns a normalised dict with route list, or a physics-based estimate fallback.
+
+    mode: 'driving' | 'walking' | 'bicycling' | 'transit'
+
+    Google returns duration_in_traffic for driving when departure_time=now is set,
+    giving real-time traffic-aware ETAs.
+    """
+    origin_str = f"{origin_lat},{origin_lng}"
+    dest_str   = f"{dest_lat},{dest_lng}"
+
+    if GOOGLE_MAPS_KEY:
+        try:
+            params: dict = {
+                "origin":       origin_str,
+                "destination":  dest_str,
+                "mode":         mode,
+                "key":          GOOGLE_MAPS_KEY,
+                "alternatives": "true",
+                "language":     "en",
+            }
+            # For driving — request real-time traffic-aware duration
+            if mode == "driving":
+                params["departure_time"] = "now"
+                params["traffic_model"]  = "best_guess"
+
+            async with httpx.AsyncClient(timeout=12) as client:
+                resp = await client.get(
+                    "https://maps.googleapis.com/maps/api/directions/json",
+                    params=params,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("status") == "OK":
+                        routes = []
+                        for r in data.get("routes", [])[:3]:
+                            leg = r.get("legs", [{}])[0]
+
+                            # Prefer traffic-aware duration for driving
+                            if mode == "driving" and leg.get("duration_in_traffic"):
+                                duration_text = leg["duration_in_traffic"].get("text", "N/A")
+                                duration_secs = leg["duration_in_traffic"].get("value", 0)
+                            else:
+                                duration_text = leg.get("duration", {}).get("text", "N/A")
+                                duration_secs = leg.get("duration", {}).get("value", 0)
+
+                            routes.append({
+                                "summary":        r.get("summary", f"{mode.capitalize()} Route"),
+                                "duration":       duration_text,
+                                "duration_secs":  duration_secs,
+                                "distance":       leg.get("distance", {}).get("text", "N/A"),
+                                "distance_meters": leg.get("distance", {}).get("value", 0),
+                                "start_address":  leg.get("start_address", ""),
+                                "end_address":    leg.get("end_address", ""),
+                                "warnings":       r.get("warnings", [None])[0] if r.get("warnings") else None,
+                                "via_waypoints":  [w.get("location", {}) for w in r.get("waypoints", [])],
+                                "steps_count":    len(leg.get("steps", [])),
+                            })
+                        if routes:
+                            return {"mode": mode, "routes": routes, "source": "google_live"}
+        except Exception as e:
+            print(f"[Directions/{mode}] {e}")
+
+    # ── Physics-based fallback when Google Maps key is not set ────────────────
+    dist_km   = _haversine(origin_lat, origin_lng, dest_lat, dest_lng)
+    ist       = _ist_now()
+    hour      = ist.hour
+    is_peak   = (7 <= hour <= 10) or (17 <= hour <= 20)  # Mumbai peak hours
+
+    # Realistic Mumbai average speeds by mode and traffic condition
+    speed_map = {
+        "driving":   20 if is_peak else 35,   # km/h in Mumbai traffic
+        "bicycling": 14,
+        "walking":   5,
+        "transit":   18 if is_peak else 25,
+    }
+    speed     = speed_map.get(mode, 25)
+    mins      = max(int(dist_km / speed * 60), 2)
+    alt_mins  = max(int(dist_km / (speed * 0.85) * 60), 2)
+
+    return {
+        "mode": mode,
+        "routes": [
+            {
+                "summary":         "Fastest Route",
+                "duration":        f"{mins} mins",
+                "duration_secs":   mins * 60,
+                "distance":        f"{round(dist_km, 1)} km",
+                "distance_meters": int(dist_km * 1000),
+                "start_address":   "",
+                "end_address":     "",
+                "warnings":        "Live traffic data unavailable — estimate based on current time" if is_peak else None,
+                "via_waypoints":   [],
+                "steps_count":     0,
+            },
+            {
+                "summary":         "Alternate Route",
+                "duration":        f"{alt_mins} mins",
+                "duration_secs":   alt_mins * 60,
+                "distance":        f"{round(dist_km * 1.2, 1)} km",
+                "distance_meters": int(dist_km * 1200),
+                "start_address":   "",
+                "end_address":     "",
+                "warnings":        None,
+                "via_waypoints":   [],
+                "steps_count":     0,
+            },
+        ],
+        "source": "physics_estimate",
+    }
+
+
+def _best_route_from_modes(modes_data: dict) -> dict:
+    """
+    Given results for all requested modes, pick the single fastest route
+    across all modes by raw duration_secs.
+    Returns {"mode": str, "route": dict, "duration_secs": int}
+    """
+    best = None
+    for mode, data in modes_data.items():
+        for route in data.get("routes", []):
+            secs = route.get("duration_secs", 999999)
+            if best is None or secs < best["duration_secs"]:
+                best = {"mode": mode, "route": route, "duration_secs": secs}
+    return best or {}
+
 
 @app.post("/ai/smart-route")
 async def ai_smart_route(req: SmartRouteRequest):
     """
-    Single endpoint for the AI Route Planner screen.
+    AI Route Planner — live multi-mode routing.
 
-    Steps (all run in parallel where possible):
-      1. Fetch directions from Google Maps (or mock fallback)
-      2. Estimate crowd density at origin coordinates
-      3. Estimate crowd density at destination coordinates
-      4. Ask Gemini for AI advice combining all signals
+    Fetches LIVE directions from Google Maps simultaneously for:
+      • driving    (traffic-aware ETA via departure_time=now)
+      • bicycling
+      • walking
+      • transit    (only if mode != walking/bicycling)
 
-    Returns: origin/dest info, routes[], crowd densities,
-             ai_advice, best_time, recommendations[].
+    Then asks Gemini to act as a route advisor — recommending which
+    vehicle and route to take RIGHT NOW based on live durations.
+    No crowd density percentages in the AI output.
+
+    Response includes per-mode routes, the overall fastest option,
+    and Gemini's natural-language route recommendation.
     """
     import re
 
     ist = _ist_now()
 
-    # ── Step 1+2+3 in parallel ─────────────────────────────────────────────
-    async def _get_directions() -> dict:
-        origin_str = f"{req.origin.lat},{req.origin.lng}"
-        dest_str   = f"{req.destination.lat},{req.destination.lng}"
-        if GOOGLE_MAPS_KEY:
-            try:
-                async with httpx.AsyncClient(timeout=12) as client:
-                    resp = await client.get(
-                        "https://maps.googleapis.com/maps/api/directions/json",
-                        params={
-                            "origin":       origin_str,
-                            "destination":  dest_str,
-                            "mode":         req.mode,
-                            "key":          GOOGLE_MAPS_KEY,
-                            "alternatives": "true",
-                        },
-                    )
-                    if resp.status_code == 200:
-                        data   = resp.json()
-                        raw_routes = data.get("routes", [])
-                        # Normalise Google's nested structure to a flat list
-                        routes = []
-                        for r in raw_routes[:3]:
-                            leg = r.get("legs", [{}])[0]
-                            routes.append({
-                                "summary":  r.get("summary", "Route"),
-                                "duration": leg.get("duration", {}).get("text", "N/A"),
-                                "distance": leg.get("distance", {}).get("text", "N/A"),
-                                "warnings": r.get("warnings", [None])[0] if r.get("warnings") else None,
-                            })
-                        return {"routes": routes, "source": "google_maps"}
-            except Exception as e:
-                print(f"[SmartRoute Directions] {e}")
+    # ── Determine which modes to fetch ────────────────────────────────────────
+    # Always fetch all 3 core modes; skip transit for walking/bicycling requests
+    modes_to_fetch = ["driving", "bicycling", "walking"]
+    if req.mode == "transit":
+        modes_to_fetch = ["transit", "driving", "walking"]
 
-        # Mock fallback
-        distance_km = _haversine(req.origin.lat, req.origin.lng,
-                                  req.destination.lat, req.destination.lng)
-        speed_kmh = {"driving": 30, "walking": 5, "transit": 20, "bicycling": 15}.get(req.mode, 30)
-        mins = max(int(distance_km / speed_kmh * 60), 3)
-        return {
-            "routes": [
-                {"summary": "Direct Route",
-                 "duration": f"{mins} mins",
-                 "distance": f"{round(distance_km, 1)} km",
-                 "warnings": None},
-                {"summary": "Alternate Route",
-                 "duration": f"{mins + random.randint(3, 10)} mins",
-                 "distance": f"{round(distance_km * 1.15, 1)} km",
-                 "warnings": "May have higher crowd density"},
-            ],
-            "source": "physics_estimate",
-        }
+    # ── Fetch all modes in parallel ───────────────────────────────────────────
+    tasks = {
+        mode: asyncio.create_task(
+            _fetch_directions_for_mode(
+                req.origin.lat,  req.origin.lng,
+                req.destination.lat, req.destination.lng,
+                mode,
+            )
+        )
+        for mode in modes_to_fetch
+    }
 
-    # Run directions + both crowd estimates in parallel
-    directions_task    = asyncio.create_task(_get_directions())
-    origin_crowd_task  = asyncio.create_task(
-        _resolve_density_custom(req.origin.name, req.origin.lat, req.origin.lng)
-    )
-    dest_crowd_task    = asyncio.create_task(
-        _resolve_density_custom(req.destination.name, req.destination.lat, req.destination.lng)
-    )
+    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    modes_data: dict = {}
+    for mode, result in zip(tasks.keys(), results):
+        if isinstance(result, Exception):
+            print(f"[SmartRoute/{mode}] {result}")
+        else:
+            modes_data[mode] = result
 
-    directions_result, origin_res, dest_res = await asyncio.gather(
-        directions_task, origin_crowd_task, dest_crowd_task,
-        return_exceptions=True,
-    )
+    # ── Build per-mode summary for prompt ────────────────────────────────────
+    mode_labels = {"driving": "🚗 Car", "bicycling": "🚲 Bike", "walking": "🚶 Walk", "transit": "🚌 Transit"}
+    mode_summary_lines = []
+    for mode, data in modes_data.items():
+        best_r = min(data.get("routes", [{}]), key=lambda r: r.get("duration_secs", 99999), default={})
+        if best_r:
+            warn = f" ⚠ {best_r['warnings']}" if best_r.get("warnings") else ""
+            mode_summary_lines.append(
+                f"  {mode_labels.get(mode, mode)}: {best_r['duration']} via {best_r['summary']}"
+                f" ({best_r['distance']}){warn}"
+            )
 
-    # Unpack crowd results safely
-    if isinstance(origin_res, Exception):
-        origin_density, origin_source = 40.0, "error_fallback"
-    else:
-        origin_density, origin_source = origin_res
+    modes_text = "\n".join(mode_summary_lines) or "  No route data available"
 
-    if isinstance(dest_res, Exception):
-        dest_density, dest_source = 40.0, "error_fallback"
-    else:
-        dest_density, dest_source = dest_res
+    # ── Pick overall fastest ───────────────────────────────────────────────────
+    fastest = _best_route_from_modes(modes_data)
 
-    routes = directions_result.get("routes", []) if isinstance(directions_result, dict) else []
-
-    # ── Step 4: Gemini AI advice ───────────────────────────────────────────
-    routes_summary = "\n".join(
-        f"  - Route {i+1}: {r.get('summary','')} — {r.get('duration','')} / {r.get('distance','')}"
-        + (f" (Warning: {r['warnings']})" if r.get("warnings") else "")
-        for i, r in enumerate(routes)
-    ) or "  - No route data available"
-
+    # ── Gemini prompt: purely a routing advisor ───────────────────────────────
     ai_prompt = (
-        f"{AI_SYSTEM}\n\n"
-        f"User is planning a journey:\n"
-        f"  From: {req.origin.name} (lat {req.origin.lat:.4f}, lng {req.origin.lng:.4f})\n"
-        f"  To:   {req.destination.name} (lat {req.destination.lat:.4f}, lng {req.destination.lng:.4f})\n"
-        f"  Mode: {req.mode}\n"
-        f"  Current IST time: {ist.strftime('%H:%M on %A')}\n\n"
-        f"Real-time crowd data:\n"
-        f"  Origin crowd density: {origin_density}% ({_crowd_status(origin_density)})\n"
-        f"  Destination crowd density: {dest_density}% ({_crowd_status(dest_density)})\n\n"
-        f"Available routes:\n{routes_summary}\n\n"
-        "Provide:\n"
-        "1. Which route is fastest and least crowded (by name from the list above)\n"
-        "2. Best departure time today (format: HH:MM AM/PM)\n"
-        "3. Two bullet recommendations (prefix each with '• ')\n\n"
-        "Keep the response concise, practical, and specific to Mumbai conditions."
+        "You are a smart real-time route advisor for Mumbai.\n"
+        "Your job: recommend the BEST way to travel RIGHT NOW based on live route data.\n"
+        "Do NOT mention population density or crowd percentages.\n"
+        "Focus ONLY on: travel time, vehicle choice, road conditions, and practical tips.\n\n"
+        f"Journey: {req.origin.name} → {req.destination.name}\n"
+        f"Current time: {ist.strftime('%I:%M %p, %A')} IST\n"
+        f"User's preferred mode: {req.mode}\n\n"
+        f"Live route options right now:\n{modes_text}\n\n"
+        "Respond in this exact format (3 sections, no extra text):\n\n"
+        "BEST ROUTE: [vehicle] via [route name] — [duration] ([distance])\n\n"
+        "WHY: [1-2 sentences on why this is best right now — mention time of day, traffic, road type]\n\n"
+        "TIPS:\n"
+        "• [tip 1 — specific road/area to use or avoid]\n"
+        "• [tip 2 — parking, entry point, transit stop, or timing tip]\n"
+        "• [tip 3 — alternative if the best option is not suitable]"
     )
 
     try:
         ai_advice = _gemini_ask(ai_prompt)
     except Exception as e:
         print(f"[SmartRoute Gemini] {e}")
+        fastest_mode  = fastest.get("mode", req.mode)
+        fastest_route = fastest.get("route", {})
         ai_advice = (
-            f"Travel from {req.origin.name} to {req.destination.name}. "
-            f"Origin crowd: {origin_density:.0f}% ({_crowd_status(origin_density)}). "
-            f"Destination crowd: {dest_density:.0f}% ({_crowd_status(dest_density)}). "
-            f"Choose the shortest route and depart during off-peak hours."
+            f"BEST ROUTE: {mode_labels.get(fastest_mode, fastest_mode)} via "
+            f"{fastest_route.get('summary','direct route')} — "
+            f"{fastest_route.get('duration','N/A')} ({fastest_route.get('distance','N/A')})\n\n"
+            f"WHY: This is the fastest available option right now.\n\n"
+            f"TIPS:\n• Depart immediately to maintain this ETA\n"
+            f"• Check for road closures before leaving\n"
+            f"• Consider {mode_labels.get('transit','transit')} as an alternative"
         )
 
-    # Extract best_time from AI response
-    time_match = re.search(r"\b(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\b", ai_advice)
-    best_time  = time_match.group(1) if time_match else (
-        "Early morning" if ist.hour < 8 else
-        "After 8:00 PM" if _crowd_status(origin_density) == "high" else
-        "Now is fine"
-    )
+    # ── Parse structured sections from AI response ────────────────────────────
+    def _extract_section(text: str, heading: str) -> str:
+        pattern = rf"{heading}[:\s]*(.*?)(?=\n[A-Z]+[:\n]|$)"
+        m = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        return m.group(1).strip() if m else ""
 
-    # Extract bullet recommendations from AI response
-    rec_lines = [
-        line.strip().lstrip("•-1234567890.).").strip()
-        for line in ai_advice.split("\n")
-        if line.strip().startswith(("•", "-")) and len(line.strip()) > 8
+    best_route_line  = _extract_section(ai_advice, "BEST ROUTE")
+    why_text         = _extract_section(ai_advice, "WHY")
+    tips_block       = _extract_section(ai_advice, "TIPS")
+
+    tip_lines = [
+        ln.strip().lstrip("•-").strip()
+        for ln in tips_block.split("\n")
+        if ln.strip().startswith(("•", "-")) and len(ln.strip()) > 5
     ]
-    recommendations = [{"text": r} for r in rec_lines[:4]] if rec_lines else [
-        {"text": f"Prefer {routes[0]['summary'] if routes else 'the direct route'} — shortest travel time"},
-        {"text": "Depart during off-peak hours to avoid crowd buildup"},
+    recommendations = [{"text": t} for t in tip_lines[:4]] if tip_lines else [
+        {"text": f"Take {fastest.get('route',{}).get('summary','the fastest route')} for best ETA"},
+        {"text": "Avoid peak-hour roads between 8–10 AM and 5–8 PM"},
     ]
+
+    # Extract departure time if AI mentions one
+    time_match = re.search(r"\b(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\b", ai_advice)
+    best_departure = time_match.group(1) if time_match else ist.strftime("%I:%M %p") + " (depart now)"
+
+    # ── Build clean per-mode route cards ──────────────────────────────────────
+    route_cards = []
+    for mode, data in modes_data.items():
+        best_r = min(data.get("routes", [{}]),
+                     key=lambda r: r.get("duration_secs", 99999), default={})
+        if best_r:
+            route_cards.append({
+                "mode":          mode,
+                "mode_label":    mode_labels.get(mode, mode),
+                "summary":       best_r.get("summary", ""),
+                "duration":      best_r.get("duration", "N/A"),
+                "duration_secs": best_r.get("duration_secs", 0),
+                "distance":      best_r.get("distance", "N/A"),
+                "warnings":      best_r.get("warnings"),
+                "source":        data.get("source", "unknown"),
+                "all_routes":    data.get("routes", []),
+            })
+
+    # Sort cards fastest first
+    route_cards.sort(key=lambda c: c["duration_secs"])
 
     return {
-        "origin":      {"name": req.origin.name,      "lat": req.origin.lat,      "lng": req.origin.lng},
+        "origin":      {"name": req.origin.name, "lat": req.origin.lat, "lng": req.origin.lng},
         "destination": {"name": req.destination.name, "lat": req.destination.lat, "lng": req.destination.lng},
-        "mode":        req.mode,
-        "best_time":   best_time,
-        "ai_advice":   ai_advice,
-        "origin_crowd": {
-            "crowd_density": origin_density,
-            "status":        _crowd_status(origin_density),
-            "source":        origin_source,
+        "ist_time":    ist.strftime("%I:%M %p IST"),
+        "ist_day":     ist.strftime("%A"),
+        # Live route data per mode
+        "route_cards": route_cards,
+        # Overall fastest across all modes
+        "fastest": {
+            "mode":       fastest.get("mode", ""),
+            "mode_label": mode_labels.get(fastest.get("mode",""), ""),
+            "summary":    fastest.get("route", {}).get("summary", ""),
+            "duration":   fastest.get("route", {}).get("duration", "N/A"),
+            "distance":   fastest.get("route", {}).get("distance", "N/A"),
         },
-        "destination_crowd": {
-            "crowd_density": dest_density,
-            "status":        _crowd_status(dest_density),
-            "source":        dest_source,
-        },
-        "routes":          routes,
-        "recommendations": recommendations,
-        "directions_source": directions_result.get("source", "unknown") if isinstance(directions_result, dict) else "unknown",
-        "ist_time":        ist.strftime("%H:%M IST"),
-        "city":            "Mumbai",
+        # AI advice sections
+        "best_route_line":  best_route_line or ai_advice.split("\n")[0],
+        "why":              why_text,
+        "ai_advice":        ai_advice,
+        "best_time":        best_departure,
+        "recommendations":  recommendations,
+        # Backward compat fields (frontend fallback uses these)
+        "routes":           route_cards[0].get("all_routes", []) if route_cards else [],
+        "city":             "Mumbai",
     }
 
 
@@ -1581,6 +1711,14 @@ AI_SYSTEM = (
     "You are an AI assistant for CrowdSense, a real-time crowd monitoring platform in Mumbai. "
     "Provide concise, actionable insights about crowd levels at monitored locations. "
     "Use emojis where helpful. Keep responses short and practical."
+)
+
+# Separate system prompt used ONLY for routing — no density language
+AI_ROUTE_SYSTEM = (
+    "You are a smart real-time route advisor for Mumbai. "
+    "Your job is to recommend the BEST route and vehicle type based on live travel times. "
+    "Never mention population density percentages. "
+    "Focus on: road names, travel time, vehicle suitability, and practical Mumbai-specific tips."
 )
 
 @app.post("/ai/insights")
@@ -1616,65 +1754,154 @@ async def ai_insights(body: AiInsightsBody):
 @app.post("/ai/route-advice")
 async def ai_route_advice(body: AiRouteAdviceBody):
     """
-    AI route advice — returns advice text, best_time string,
-    and a parsed recommendations list as the frontend expects.
+    AI Route Advice — fallback endpoint used when /ai/smart-route is unavailable.
+
+    Fetches live directions for driving, bicycling, and walking in parallel,
+    then asks Gemini to recommend the best vehicle and route right now.
+    Returns advice text, best_time, and structured recommendations[].
+    No population density in the response.
     """
-    try:
-        crowd_info = ""
-        if body.crowdData:
-            crowd_info = "\n".join(
-                f"- {item.get('locationName') or item.get('location_name','?')}: "
-                f"{item.get('crowd_density') or item.get('crowdDensity','?')}% crowd"
-                for item in body.crowdData
+    import re
+
+    ist = _ist_now()
+
+    # ── Resolve coordinates from names if origin/destination are strings ──────
+    origin_name = body.origin or "current location"
+    dest_name   = body.destination or "destination"
+
+    # If coordinates are embedded in crowdData, use the first item's coords
+    # Otherwise fall back to geocoding the names via Nominatim
+    origin_lat, origin_lng = 19.0760, 72.8777   # Mumbai centre default
+    dest_lat,   dest_lng   = 19.0760, 72.8777
+
+    if body.crowdData and len(body.crowdData) >= 2:
+        try:
+            origin_lat = float(body.crowdData[0].get("latitude", origin_lat))
+            origin_lng = float(body.crowdData[0].get("longitude", origin_lng))
+            dest_lat   = float(body.crowdData[-1].get("latitude", dest_lat))
+            dest_lng   = float(body.crowdData[-1].get("longitude", dest_lng))
+        except (TypeError, ValueError):
+            pass
+    elif body.origin and body.destination:
+        # Geocode via Nominatim
+        origin_results = await _nominatim_search(body.origin, limit=1, bias_lat=19.076, bias_lng=72.877)
+        dest_results   = await _nominatim_search(body.destination, limit=1, bias_lat=19.076, bias_lng=72.877)
+        if origin_results:
+            origin_lat, origin_lng = origin_results[0]["lat"], origin_results[0]["lng"]
+        if dest_results:
+            dest_lat, dest_lng = dest_results[0]["lat"], dest_results[0]["lng"]
+
+    # ── Fetch live directions for all 3 core modes in parallel ───────────────
+    driving_task   = asyncio.create_task(_fetch_directions_for_mode(origin_lat, origin_lng, dest_lat, dest_lng, "driving"))
+    bike_task      = asyncio.create_task(_fetch_directions_for_mode(origin_lat, origin_lng, dest_lat, dest_lng, "bicycling"))
+    walking_task   = asyncio.create_task(_fetch_directions_for_mode(origin_lat, origin_lng, dest_lat, dest_lng, "walking"))
+
+    driving_res, bike_res, walking_res = await asyncio.gather(
+        driving_task, bike_task, walking_task, return_exceptions=True
+    )
+
+    mode_labels = {"driving": "🚗 Car/Auto", "bicycling": "🚲 Bike", "walking": "🚶 Walk"}
+    modes_data  = {}
+    for mode, res in [("driving", driving_res), ("bicycling", bike_res), ("walking", walking_res)]:
+        if not isinstance(res, Exception):
+            modes_data[mode] = res
+
+    # ── Build compact live summary for Gemini ─────────────────────────────────
+    mode_lines = []
+    for mode, data in modes_data.items():
+        best_r = min(data.get("routes", [{}]), key=lambda r: r.get("duration_secs", 99999), default={})
+        if best_r:
+            warn = f" ⚠ {best_r['warnings']}" if best_r.get("warnings") else ""
+            mode_lines.append(
+                f"  {mode_labels[mode]}: {best_r['duration']} via {best_r['summary']}"
+                f" ({best_r['distance']}){warn}"
             )
 
-        prompt = (
-            f"{AI_SYSTEM}\n\nUser wants to travel"
-            + (f" from '{body.origin}'" if body.origin else "")
-            + (f" to '{body.destination}'" if body.destination else "")
-            + f".\n\nCurrent crowd levels:\n{crowd_info or 'Not provided'}\n\n"
-            "Provide:\n"
-            "1. The single best time to depart (format: HH:MM AM/PM, e.g. 10:30 AM)\n"
-            "2. Which route or road to take and why\n"
-            "3. Two bullet recommendations (prefix each with '• ')\n\n"
-            "Keep the response concise and practical."
-        )
+    modes_text = "\n".join(mode_lines) or "  No live route data — using time-based estimate"
+
+    fastest = _best_route_from_modes(modes_data)
+
+    # ── Gemini prompt: routing advisor, no density ────────────────────────────
+    prompt = (
+        f"{AI_ROUTE_SYSTEM}\n\n"
+        f"Journey: {origin_name} → {dest_name}\n"
+        f"Current time: {ist.strftime('%I:%M %p, %A')} IST\n\n"
+        f"Live travel times right now:\n{modes_text}\n\n"
+        "Respond in this format:\n\n"
+        "BEST ROUTE: [vehicle] via [road/route] — [duration] ([distance])\n\n"
+        "WHY: [1-2 sentences — time savings, road type, suitability for this time of day]\n\n"
+        "TIPS:\n"
+        "• [specific road or area to use]\n"
+        "• [timing or parking tip]\n"
+        "• [backup option if first choice is unavailable]"
+    )
+
+    try:
         advice_text = _gemini_ask(prompt)
-
-        # Extract best_time — look for a time pattern like "10:30 AM"
-        import re
-        time_match = re.search(r"\b(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\b", advice_text)
-        best_time  = time_match.group(1) if time_match else "Off-peak hours"
-
-        # Extract bullet recommendations
-        rec_lines = [
-            line.strip().lstrip("•-").strip()
-            for line in advice_text.split("\n")
-            if line.strip().startswith(("•", "-")) and len(line.strip()) > 5
-        ]
-        recommendations = [{"text": r} for r in rec_lines[:4]] if rec_lines else [
-            {"text": "Travel during off-peak hours for a smoother journey"},
-            {"text": "Check crowd levels before departure"},
-        ]
-
-        return {
-            "advice":          advice_text,
-            "summary":         advice_text,       # backward compat
-            "best_time":       best_time,
-            "recommendations": recommendations,
-            "success":         True,
-            "city":            "Mumbai",
-        }
     except Exception as e:
-        print(f"[AI Route] {e}\n{traceback.format_exc()}")
-        return {
-            "advice":          "Route advice temporarily unavailable.",
-            "summary":         "",
-            "best_time":       "N/A",
-            "recommendations": [],
-            "success":         False,
-            "error":           str(e),
-        }
+        print(f"[RouteAdvice Gemini] {e}")
+        fastest_mode  = fastest.get("mode", "driving")
+        fastest_route = fastest.get("route", {})
+        advice_text = (
+            f"BEST ROUTE: {mode_labels.get(fastest_mode, fastest_mode)} via "
+            f"{fastest_route.get('summary','direct route')} — "
+            f"{fastest_route.get('duration','N/A')} ({fastest_route.get('distance','N/A')})\n\n"
+            f"WHY: Fastest available option at {ist.strftime('%I:%M %p')}.\n\n"
+            f"TIPS:\n• Depart now to maintain this ETA\n"
+            f"• Avoid peak-hour congestion on Western/Eastern Express Highway\n"
+            f"• Consider local trains if driving time exceeds 45 mins"
+        )
+
+    # Extract best_time if Gemini mentions one
+    time_match = re.search(r"\b(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\b", advice_text)
+    best_time  = time_match.group(1) if time_match else ist.strftime("%I:%M %p") + " (now)"
+
+    # Parse bullet tips into recommendations[]
+    tip_lines = [
+        ln.strip().lstrip("•-").strip()
+        for ln in advice_text.split("\n")
+        if ln.strip().startswith(("•", "-")) and len(ln.strip()) > 5
+    ]
+    recommendations = [{"text": t} for t in tip_lines[:4]] if tip_lines else [
+        {"text": f"Take {fastest.get('route',{}).get('summary','the fastest route')} for best ETA"},
+        {"text": "Avoid Western Express Highway during peak hours (8–10 AM, 5–8 PM)"},
+        {"text": "Local trains are fastest for distances over 10 km in Mumbai"},
+    ]
+
+    # Build route cards per mode for the frontend
+    route_cards = []
+    for mode, data in modes_data.items():
+        best_r = min(data.get("routes", [{}]), key=lambda r: r.get("duration_secs", 99999), default={})
+        if best_r:
+            route_cards.append({
+                "mode":          mode,
+                "mode_label":    mode_labels.get(mode, mode),
+                "summary":       best_r.get("summary", ""),
+                "duration":      best_r.get("duration", "N/A"),
+                "duration_secs": best_r.get("duration_secs", 0),
+                "distance":      best_r.get("distance", "N/A"),
+                "warnings":      best_r.get("warnings"),
+                "source":        data.get("source", "unknown"),
+            })
+    route_cards.sort(key=lambda c: c["duration_secs"])
+
+    return {
+        "advice":          advice_text,
+        "summary":         advice_text,           # backward compat
+        "best_time":       best_time,
+        "recommendations": recommendations,
+        "route_cards":     route_cards,
+        "fastest": {
+            "mode":       fastest.get("mode", ""),
+            "mode_label": mode_labels.get(fastest.get("mode",""), ""),
+            "summary":    fastest.get("route", {}).get("summary", ""),
+            "duration":   fastest.get("route", {}).get("duration", "N/A"),
+            "distance":   fastest.get("route", {}).get("distance", "N/A"),
+        },
+        "ist_time":        ist.strftime("%I:%M %p IST"),
+        "success":         True,
+        "city":            "Mumbai",
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ADMIN / TRAINING
