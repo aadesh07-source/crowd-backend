@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CloudBlog — Cloud Computing &amp; DevOps Publication</title>
+  <meta name="description" content="A modern publication covering cloud computing, DevOps, infrastructure, and platform engineering." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body> 
+<p>Hello Azure CI/CD!</p>
+
+  <!-- ===================== NAVBAR ===================== -->
+  <header class="navbar" role="banner">
+    <div class="container navbar__inner">
+      <a href="#" class="navbar__logo" aria-label="CloudBlog home">
+        <span class="logo__mark"></span>
+        CloudBlog
+      </a>
+
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-hidden="true" />
+
+      <nav class="navbar__nav" role="navigation" aria-label="Primary navigation">
+        <ul class="nav__list">
+          <li><a href="#" class="nav__link nav__link--active">Home</a></li>
+          <li><a href="#articles" class="nav__link">Articles</a></li>
+          <li><a href="#categories" class="nav__link">Categories</a></li>
+          <li><a href="#about" class="nav__link">About</a></li>
+          <li><a href="#contact" class="nav__link">Contact</a></li>
+        </ul>
+      </nav>
+
+      <div class="navbar__cta">
+        <a href="#newsletter" class="btn btn--outline btn--sm">Subscribe</a>
+      </div>
+
+      <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle navigation">
+        <span class="nav-toggle-label__bar"></span>
+        <span class="nav-toggle-label__bar"></span>
+        <span class="nav-toggle-label__bar"></span>
+      </label>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ===================== HERO ===================== -->
+    <section class="hero" aria-label="Introduction">
+      <div class="hero__bg-shape hero__bg-shape--1" aria-hidden="true"></div>
+      <div class="hero__bg-shape hero__bg-shape--2" aria-hidden="true"></div>
+      <div class="hero__bg-shape hero__bg-shape--3" aria-hidden="true"></div>
+
+      <div class="container hero__inner">
+        <div class="hero__content">
+          <span class="hero__eyebrow">Cloud &amp; Infrastructure</span>
+          <h1 class="hero__headline">
+            The frontier of cloud<br />
+            engineering, written<br />
+            <em class="hero__headline--accent">for engineers.</em>
+          </h1>
+          <p class="hero__subtext">
+            In-depth articles on cloud architecture, platform engineering, DevOps practices,
+            and the tooling that shapes how modern infrastructure is built and operated.
+          </p>
+          <div class="hero__actions">
+            <a href="#articles" class="btn btn--primary">Explore Articles</a>
+            <a href="#categories" class="btn btn--ghost">Browse Categories</a>
+          </div>
+          <div class="hero__meta">
+            <span class="hero__meta-item">
+              <strong>240+</strong> Articles
+            </span>
+            <span class="hero__meta-divider" aria-hidden="true"></span>
+            <span class="hero__meta-item">
+              <strong>18k+</strong> Readers
+            </span>
+            <span class="hero__meta-divider" aria-hidden="true"></span>
+            <span class="hero__meta-item">
+              <strong>6</strong> Categories
+            </span>
+          </div>
+        </div>
+
+        <aside class="hero__visual" aria-hidden="true">
+          <div class="hero__card hero__card--top">
+            <span class="card-chip card-chip--gcp">GCP</span>
+            <p class="hero__card-title">Multi-Region Load Balancing with Cloud Armor</p>
+            <span class="hero__card-meta">12 min read</span>
+          </div>
+          <div class="hero__card hero__card--mid">
+            <span class="card-chip card-chip--k8s">K8s</span>
+            <p class="hero__card-title">GitOps Workflows at Scale with ArgoCD</p>
+            <span class="hero__card-meta">9 min read</span>
+          </div>
+          <div class="hero__card hero__card--bot">
+            <span class="card-chip card-chip--aws">AWS</span>
+            <p class="hero__card-title">Cost Optimization Strategies for EKS Clusters</p>
+            <span class="hero__card-meta">15 min read</span>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ===================== FEATURED ARTICLES ===================== -->
+    <section class="section section--cream" id="articles" aria-labelledby="articles-heading">
+      <div class="container">
+        <header class="section-header">
+          <span class="section-eyebrow">Featured</span>
+          <h2 class="section-title" id="articles-heading">Latest Articles</h2>
+          <p class="section-subtitle">Carefully researched, technically rigorous writing from practitioners in the field.</p>
+        </header>
+
+        <div class="articles-grid">
+
+          <article class="article-card">
+            <div class="article-card__top">
+              <span class="tag tag--devops">DevOps</span>
+              <time class="article-card__date" datetime="2025-06-10">June 10, 2025</time>
+            </div>
+            <h3 class="article-card__title">Platform Engineering Is Not Just Another Name for DevOps</h3>
+            <p class="article-card__excerpt">
+              How Internal Developer Platforms are shifting the mental model from shared tooling to product thinking inside infrastructure teams.
+            </p>
+            <footer class="article-card__footer">
+              <div class="article-card__author">
+                <div class="author-avatar" aria-hidden="true">AS</div>
+                <span class="author-name">Arjun Sharma</span>
+              </div>
+              <a href="#" class="article-card__link" aria-label="Read Platform Engineering article">Read More</a>
+            </footer>
+          </article>
+
+          <article class="article-card">
+            <div class="article-card__top">
+              <span class="tag tag--gcp">Google Cloud</span>
+              <time class="article-card__date" datetime="2025-06-07">June 7, 2025</time>
+            </div>
+            <h3 class="article-card__title">Designing for Resilience: Cloud Spanner in Global Applications</h3>
+            <p class="article-card__excerpt">
+              A deep dive into how Cloud Spanner handles split-brain scenarios, external consistency, and what that means for distributed application design.
+            </p>
+            <footer class="article-card__footer">
+              <div class="article-card__author">
+                <div class="author-avatar" aria-hidden="true">PK</div>
+                <span class="author-name">Priya Kapoor</span>
+              </div>
+              <a href="#" class="article-card__link" aria-label="Read Cloud Spanner article">Read More</a>
+            </footer>
+          </article>
+
+          <article class="article-card">
+            <div class="article-card__top">
+              <span class="tag tag--aws">AWS</span>
+              <time class="article-card__date" datetime="2025-06-04">June 4, 2025</time>
+            </div>
+            <h3 class="article-card__title">ECS vs EKS: Choosing the Right Container Orchestration</h3>
+            <p class="article-card__excerpt">
+              Beyond the surface-level comparison — this article examines operational complexity, cost at scale, and team capability as decision factors.
+            </p>
+            <footer class="article-card__footer">
+              <div class="article-card__author">
+                <div class="author-avatar" aria-hidden="true">MR</div>
+                <span class="author-name">Marcus Reid</span>
+              </div>
+              <a href="#" class="article-card__link" aria-label="Read ECS vs EKS article">Read More</a>
+            </footer>
+          </article>
+
+          <article class="article-card">
+            <div class="article-card__top">
+              <span class="tag tag--azure">Azure</span>
+              <time class="article-card__date" datetime="2025-05-30">May 30, 2025</time>
+            </div>
+            <h3 class="article-card__title">Zero-Trust Networking with Azure Virtual WAN and Firewall Manager</h3>
+            <p class="article-card__excerpt">
+              Implementing defense-in-depth across hub-and-spoke topologies without sacrificing developer velocity or operational visibility.
+            </p>
+            <footer class="article-card__footer">
+              <div class="article-card__author">
+                <div class="author-avatar" aria-hidden="true">LN</div>
+                <span class="author-name">Layla Nasser</span>
+              </div>
+              <a href="#" class="article-card__link" aria-label="Read Zero-Trust article">Read More</a>
+            </footer>
+          </article>
+
+          <article class="article-card">
+            <div class="article-card__top">
+              <span class="tag tag--devops">DevOps</span>
+              <time class="article-card__date" datetime="2025-05-26">May 26, 2025</time>
+            </div>
+            <h3 class="article-card__title">Observability Is a Discipline, Not a Dashboard</h3>
+            <p class="article-card__excerpt">
+              Why collecting metrics, logs, and traces is the easy part — and how to structure your telemetry strategy around actionable signal.
+            </p>
+            <footer class="article-card__footer">
+              <div class="article-card__author">
+                <div class="author-avatar" aria-hidden="true">TC</div>
+                <span class="author-name">Theo Chen</span>
+              </div>
+              <a href="#" class="article-card__link" aria-label="Read Observability article">Read More</a>
+            </footer>
+          </article>
+
+          <article class="article-card">
+            <div class="article-card__top">
+              <span class="tag tag--webdev">Web Dev</span>
+              <time class="article-card__date" datetime="2025-05-22">May 22, 2025</time>
+            </div>
+            <h3 class="article-card__title">Edge Compute and the Death of the Origin Server</h3>
+            <p class="article-card__excerpt">
+              From CDN cache rules to full serverless edge runtimes — examining where application logic should actually run in 2025.
+            </p>
+            <footer class="article-card__footer">
+              <div class="article-card__author">
+                <div class="author-avatar" aria-hidden="true">SF</div>
+                <span class="author-name">Sofia Ferreira</span>
+              </div>
+              <a href="#" class="article-card__link" aria-label="Read Edge Compute article">Read More</a>
+            </footer>
+          </article>
+
+        </div>
+
+        <div class="section-cta">
+          <a href="#" class="btn btn--outline">View All Articles</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== CATEGORIES ===================== -->
+    <section class="section" id="categories" aria-labelledby="categories-heading">
+      <div class="container">
+        <header class="section-header">
+          <span class="section-eyebrow">Browse</span>
+          <h2 class="section-title" id="categories-heading">Categories</h2>
+          <p class="section-subtitle">Every article organized by the technology stack it covers.</p>
+        </header>
+
+        <div class="categories-grid">
+
+          <a href="#" class="category-card category-card--cloud" aria-label="Browse Cloud Computing articles">
+            <div class="category-card__icon" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 4.46 4.46 0 0 0-.5.03A5 5 0 0 0 7 11a3.5 3.5 0 0 0 .5 6.97"/><path d="M12 12v9m-3-3 3 3 3-3"/></svg>
+            </div>
+            <h3 class="category-card__title">Cloud Computing</h3>
+            <p class="category-card__count">84 articles</p>
+          </a>
+
+          <a href="#" class="category-card category-card--gcp" aria-label="Browse Google Cloud Platform articles">
+            <div class="category-card__icon" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20A14.5 14.5 0 0 0 12 2"/><path d="M2 12h20"/></svg>
+            </div>
+            <h3 class="category-card__title">Google Cloud Platform</h3>
+            <p class="category-card__count">46 articles</p>
+          </a>
+
+          <a href="#" class="category-card category-card--aws" aria-label="Browse Amazon Web Services articles">
+            <div class="category-card__icon" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            </div>
+            <h3 class="category-card__title">Amazon Web Services</h3>
+            <p class="category-card__count">52 articles</p>
+          </a>
+
+          <a href="#" class="category-card category-card--azure" aria-label="Browse Microsoft Azure articles">
+            <div class="category-card__icon" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            </div>
+            <h3 class="category-card__title">Microsoft Azure</h3>
+            <p class="category-card__count">38 articles</p>
+          </a>
+
+          <a href="#" class="category-card category-card--devops" aria-label="Browse DevOps articles">
+            <div class="category-card__icon" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M16 3h5v5"/><path d="M21 3 12 12"/></svg>
+            </div>
+            <h3 class="category-card__title">DevOps</h3>
+            <p class="category-card__count">61 articles</p>
+          </a>
+
+          <a href="#" class="category-card category-card--webdev" aria-label="Browse Web Development articles">
+            <div class="category-card__icon" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            </div>
+            <h3 class="category-card__title">Web Development</h3>
+            <p class="category-card__count">29 articles</p>
+          </a>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== TRENDING ===================== -->
+    <section class="section section--cream trending" aria-labelledby="trending-heading">
+      <div class="container">
+        <header class="section-header">
+          <span class="section-eyebrow">Most Read</span>
+          <h2 class="section-title" id="trending-heading">Trending This Month</h2>
+        </header>
+
+        <div class="trending__layout">
+
+          <article class="trending__feature">
+            <div class="trending__feature-label">
+              <span class="tag tag--devops">Platform Engineering</span>
+              <span class="trending__read-time">18 min read</span>
+            </div>
+            <h3 class="trending__feature-title">The Infrastructure Contract: How Platform Teams Should Define Their API to Application Teams</h3>
+            <p class="trending__feature-excerpt">
+              Internal developer platforms are successful when their boundaries are clearly defined. This article explores how platform teams at Spotify, Shopify, and Airbnb established stable internal APIs that let application teams move fast without stepping on each other.
+            </p>
+            <div class="trending__feature-footer">
+              <div class="article-card__author">
+                <div class="author-avatar" aria-hidden="true">DW</div>
+                <div>
+                  <span class="author-name">Daniel Watts</span>
+                  <span class="author-role">Staff Platform Engineer</span>
+                </div>
+              </div>
+              <a href="#" class="btn btn--primary btn--sm">Read Article</a>
+            </div>
+          </article>
+
+          <aside class="trending__list" aria-label="Other trending articles">
+            <ol class="trending__ranked">
+
+              <li class="trending__ranked-item">
+                <span class="trending__rank" aria-hidden="true">01</span>
+                <div class="trending__ranked-content">
+                  <span class="tag tag--aws">AWS</span>
+                  <a href="#" class="trending__ranked-title">Lambda Cold Starts Are a Symptom, Not the Disease</a>
+                  <span class="trending__ranked-meta">11 min · Marcus Reid</span>
+                </div>
+              </li>
+
+              <li class="trending__ranked-item">
+                <span class="trending__rank" aria-hidden="true">02</span>
+                <div class="trending__ranked-content">
+                  <span class="tag tag--gcp">GCP</span>
+                  <a href="#" class="trending__ranked-title">BigQuery vs Snowflake: A Cost Model for Growing Teams</a>
+                  <span class="trending__ranked-meta">14 min · Priya Kapoor</span>
+                </div>
+              </li>
+
+              <li class="trending__ranked-item">
+                <span class="trending__rank" aria-hidden="true">03</span>
+                <div class="trending__ranked-content">
+                  <span class="tag tag--azure">Azure</span>
+                  <a href="#" class="trending__ranked-title">AKS Node Pool Strategies for Mixed Workloads</a>
+                  <span class="trending__ranked-meta">9 min · Layla Nasser</span>
+                </div>
+              </li>
+
+              <li class="trending__ranked-item">
+                <span class="trending__rank" aria-hidden="true">04</span>
+                <div class="trending__ranked-content">
+                  <span class="tag tag--devops">DevOps</span>
+                  <a href="#" class="trending__ranked-title">Terraform State Management Without the Pain</a>
+                  <span class="trending__ranked-meta">10 min · Theo Chen</span>
+                </div>
+              </li>
+
+            </ol>
+          </aside>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== ABOUT ===================== -->
+    <section class="section about" id="about" aria-labelledby="about-heading">
+      <div class="container">
+        <div class="about__layout">
+
+          <div class="about__content">
+            <span class="section-eyebrow">About</span>
+            <h2 class="section-title" id="about-heading">A publication built by engineers, for engineers.</h2>
+            <p class="about__body">
+              CloudBlog is an independent technical publication covering the full stack of modern infrastructure — from Kubernetes internals and cloud provider services to platform engineering philosophy and software delivery practices.
+            </p>
+            <p class="about__body">
+              Every article goes through technical review before publishing. We do not publish vendor-sponsored content. Our goal is to help practitioners make better decisions by giving them accurate, nuanced information about complex topics.
+            </p>
+
+            <ul class="about__pillars" aria-label="Topics covered">
+              <li class="about__pillar">Cloud Computing</li>
+              <li class="about__pillar">DevOps</li>
+              <li class="about__pillar">Infrastructure</li>
+              <li class="about__pillar">Platform Engineering</li>
+              <li class="about__pillar">Software Development</li>
+            </ul>
+
+            <a href="#" class="btn btn--outline">Read Our Editorial Charter</a>
+          </div>
+
+          <div class="about__stats" aria-label="Publication statistics">
+            <div class="stat-card">
+              <span class="stat-card__num">240+</span>
+              <span class="stat-card__label">Technical Articles</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-card__num">18k</span>
+              <span class="stat-card__label">Monthly Readers</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-card__num">100%</span>
+              <span class="stat-card__label">Practitioner Written</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-card__num">0</span>
+              <span class="stat-card__label">Sponsored Posts</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== NEWSLETTER ===================== -->
+    <section class="section section--cream newsletter" id="newsletter" aria-labelledby="newsletter-heading">
+      <div class="container">
+        <div class="newsletter__inner">
+          <div class="newsletter__content">
+            <span class="section-eyebrow">Newsletter</span>
+            <h2 class="newsletter__title" id="newsletter-heading">Stay ahead of the stack.</h2>
+            <p class="newsletter__body">
+              New articles, architecture walkthroughs, and tooling deep-dives — delivered to your inbox every two weeks. No noise. No marketing. Just depth.
+            </p>
+            <ul class="newsletter__perks" aria-label="Newsletter benefits">
+              <li class="newsletter__perk">
+                <span class="perk-dot" aria-hidden="true"></span>
+                Curated cloud engineering reads, bi-weekly
+              </li>
+              <li class="newsletter__perk">
+                <span class="perk-dot" aria-hidden="true"></span>
+                Early access to long-form architecture guides
+              </li>
+              <li class="newsletter__perk">
+                <span class="perk-dot" aria-hidden="true"></span>
+                Zero sponsored content, ever
+              </li>
+            </ul>
+          </div>
+
+          <div class="newsletter__form-wrap">
+            <form class="newsletter__form" action="#" method="post" novalidate aria-label="Newsletter signup">
+              <div class="form-group">
+                <label for="sub-name" class="form-label">Name</label>
+                <input type="text" id="sub-name" name="name" class="form-input" placeholder="Your name" autocomplete="given-name" />
+              </div>
+              <div class="form-group">
+                <label for="sub-email" class="form-label">Email address</label>
+                <input type="email" id="sub-email" name="email" class="form-input" placeholder="you@company.com" autocomplete="email" required />
+              </div>
+              <div class="form-group">
+                <label for="sub-role" class="form-label">Role</label>
+                <select id="sub-role" name="role" class="form-input form-select">
+                  <option value="" disabled selected>Select your role</option>
+                  <option value="sre">Site Reliability Engineer</option>
+                  <option value="devops">DevOps Engineer</option>
+                  <option value="platform">Platform Engineer</option>
+                  <option value="cloud">Cloud Architect</option>
+                  <option value="dev">Software Developer</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <button type="submit" class="btn btn--primary btn--full">Subscribe to CloudBlog</button>
+              <p class="form-footnote">No spam. Unsubscribe at any time.</p>
+            </form>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== CONTACT ===================== -->
+    <section class="section contact" id="contact" aria-labelledby="contact-heading">
+      <div class="container contact__inner">
+        <div class="contact__content">
+          <span class="section-eyebrow">Contact</span>
+          <h2 class="section-title" id="contact-heading">Write for CloudBlog.</h2>
+          <p class="contact__body">
+            We welcome contributions from experienced practitioners. If you have deep expertise in cloud infrastructure, platform engineering, or DevOps and want to share it, we would like to hear from you.
+          </p>
+          <address class="contact__info">
+            <a href="mailto:editorial@cloudblog.io" class="contact__email">editorial@cloudblog.io</a>
+          </address>
+        </div>
+        <div class="contact__form-wrap">
+          <form class="contact__form" action="#" method="post" novalidate aria-label="Contact form">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="c-name" class="form-label">Name</label>
+                <input type="text" id="c-name" name="name" class="form-input" placeholder="Your name" autocomplete="name" />
+              </div>
+              <div class="form-group">
+                <label for="c-email" class="form-label">Email</label>
+                <input type="email" id="c-email" name="email" class="form-input" placeholder="you@company.com" autocomplete="email" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="c-subject" class="form-label">Subject</label>
+              <input type="text" id="c-subject" name="subject" class="form-input" placeholder="Article pitch, collaboration, press..." />
+            </div>
+            <div class="form-group">
+              <label for="c-message" class="form-label">Message</label>
+              <textarea id="c-message" name="message" class="form-input form-textarea" rows="5" placeholder="Tell us about your proposed article or topic..."></textarea>
+            </div>
+            <button type="submit" class="btn btn--primary">Send Message</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================== FOOTER ===================== -->
+  <footer class="footer" role="contentinfo">
+    <div class="container footer__inner">
+
+      <div class="footer__brand">
+        <a href="#" class="navbar__logo footer__logo" aria-label="CloudBlog">
+          <span class="logo__mark"></span>
+          CloudBlog
+        </a>
+        <p class="footer__tagline">
+          A modern publication covering cloud computing, DevOps, infrastructure, and platform engineering.
+        </p>
+        <div class="footer__social" aria-label="Social links">
+          <a href="#" class="social-link" aria-label="Follow on X / Twitter">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          </a>
+          <a href="#" class="social-link" aria-label="Follow on LinkedIn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+          </a>
+          <a href="#" class="social-link" aria-label="Follow on GitHub">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+          </a>
+          <a href="#" class="social-link" aria-label="RSS Feed">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+          </a>
+        </div>
+      </div>
+
+      <nav class="footer__nav" aria-label="Footer navigation">
+        <div class="footer__col">
+          <h4 class="footer__col-title">Quick Links</h4>
+          <ul class="footer__links">
+            <li><a href="#">Home</a></li>
+            <li><a href="#articles">Articles</a></li>
+            <li><a href="#categories">Categories</a></li>
+            <li><a href="#about">About</a></li>
+            <li><a href="#contact">Contact</a></li>
+          </ul>
+        </div>
+        <div class="footer__col">
+          <h4 class="footer__col-title">Resources</h4>
+          <ul class="footer__links">
+            <li><a href="#">Architecture Guides</a></li>
+            <li><a href="#">Tooling Reviews</a></li>
+            <li><a href="#">Glossary</a></li>
+            <li><a href="#">Newsletter Archive</a></li>
+            <li><a href="#">RSS Feed</a></li>
+          </ul>
+        </div>
+        <div class="footer__col">
+          <h4 class="footer__col-title">Topics</h4>
+          <ul class="footer__links">
+            <li><a href="#">Cloud Computing</a></li>
+            <li><a href="#">Google Cloud</a></li>
+            <li><a href="#">Amazon Web Services</a></li>
+            <li><a href="#">Microsoft Azure</a></li>
+            <li><a href="#">DevOps</a></li>
+          </ul>
+        </div>
+      </nav>
+
+    </div>
+
+    <div class="footer__bottom">
+      <div class="container footer__bottom-inner">
+        <p class="footer__copy">&copy; 2025 CloudBlog. All rights reserved. Independent. Unsponsored.</p>
+        <nav aria-label="Legal links">
+          <ul class="footer__legal">
+            <li><a href="#">Privacy Policy</a></li>
+            <li><a href="#">Terms of Use</a></li>
+            <li><a href="#">Editorial Charter</a></li>
+          </ul>
+        </nav>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
